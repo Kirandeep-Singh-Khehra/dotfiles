@@ -1,0 +1,148 @@
+#!/bin/bash
+
+PS1='\[\e[34;1m\]\w\[\e[0m\]\$ '
+
+export LANG=en_US.utf8
+export LC_ALL=en_US.utf8
+
+alias notify='for i in {1..5}; do echo -en "\a"; sleep .5; done'
+alias kind-load='kind load docker-image --name $(kind get clusters | head -1)'
+alias docker-volume="echo -e \"\tCONTAINER_NAME\t\t VOLUME\"; docker ps -q | xargs -I {} docker inspect --format '{{.Name}}: {{range .Mounts}}{{if eq .Type \"volume\"}}{{.Name}}{{end}}{{end}}' {} | sed 's/\// /g' | column -t"
+
+# Orchestrator aliases
+alias ci="python3 \$(git rev-parse --show-toplevel)/community_images/common/orchestrator/main.py"
+alias cis="ci stub"
+alias cisc="ci stub_coverage"
+alias cih="ci harden"
+alias cihc="ci harden_coverage"
+alias citc="ci test_coverage"
+
+# Git Helping aliases
+alias gl="GIT_SSH_COMMAND='ssh -i /home/kiran/.ssh/id_gl_eph' git"
+alias gpo="git push origin"
+alias glpo="gl push origin"
+alias gh="GIT_SSH_COMMAND='ssh -i ~/.ssh/id_eph_gh' git"
+alias ghpo="gh push origin"
+alias gcsm="git commit -s -m"
+alias gcasm="git commit -a -s -m"
+alias gd="git diff --color-words --word-diff-regex=."
+alias A='gd . && r2pa | less -SR'
+
+alias cdgr='cd $(git rev-parse --show-toplevel)'
+
+t() {
+    local name=$1
+    local name_arg=${name}
+    if [ -z "$name" ]; then
+        name=$(gum choose --header "Choose server:" ":LAST_OPENED:" $(tmux  -L kiran-dev ls | awk -F: '{ print $1 }'))
+        if [ -z "$name" ]; then
+            return 1
+        elif [ "$name" == ":LAST_OPENED:" ]; then
+            name_arg=
+        else
+            name_arg="-t $name"
+        fi
+    fi
+    TERM=xterm tmux -u -L kiran-dev attach $name_arg || (TERM=xterm tmux -u -L kiran-dev new -s $name)
+
+}
+
+hdiff_old() {
+    diff -u --color=always $@ | less -R
+}
+
+hdiff() {
+    git diff --no-index --color-words --word-diff-regex=. $@ | less -R
+}
+
+vdiff() {
+    diff -y --color=always $@ | less -R
+}
+
+search() {
+    if [[ $# -eq 1 ]]; then
+        find . -type f | while read p; do echo -e "\n\033[32m$p\033[0m"; cat -n $p | grep -A3 -B3 "${1}" --color=always ; done | less -R
+    else
+        echo "Usage: $0 <pattern>"
+    fi
+}
+
+sg() {
+    less -Rf <(grep -rn --color=always -A2 -B2 $@ )
+}
+
+bbproxy() {
+    if ! [[ -f "$(which busybox_HTTPD)" ]]; then
+      sudo wget https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox_HTTPD \
+      -O /usr/local/bin/busybox_HTTPD
+      chmod 775 /usr/local/bin/busybox_HTTPD
+    fi
+    if [[ $# -eq 2 || $# -eq 3 ]]; then
+        port=${2:-8080}
+        echo "Proxying ${1} -> 0.0.0.0:${port}"
+        $(which busybox_HTTPD) -f -vv -p "${port}" -c <(echo "P:/:http://${1}/")
+    else
+        echo "Usage: bbproxy <ip>:<port> [local-port]"
+    fi
+}
+
+flash() {
+    # Check the last command's exit status
+    if [[ $? -eq 0 ]]; then
+        # Success (green)
+        color_code=46 #15  # White background (you could use 46 for green background)
+    else
+        # Failure (red)
+        color_code=1   # Red background
+    fi
+
+    # Enter alternate screen buffer
+    echo -en "\033[?1049h"
+    
+    for i in {1..5}
+    do
+        # Clear screen and set background to chosen color
+        echo -en "\033[48;5;${color_code}m\033[2J\a"  # Set background color and clear screen
+        sleep 0.1
+        # Clear screen and reset to default color
+        echo -en "\033[48;5;0m\033[2J"  # Black background to reset the flash
+        sleep 0.1
+    done
+    
+    # Return to the main screen buffer
+    echo -en "\033[?1049l"
+}
+
+kirun() {
+    RUN_CMD=$(head -2 ${1} | grep -o 'run: .*' | sed 's/run: //' | sed "s=%=\"${1}\"=g");
+
+    if [[ -n "${RUN_CMD}" ]]; then
+        echo -e "\033[34m$: ${RUN_CMD}\033[0m"
+        bash -c "${RUN_CMD}"
+    else
+        echo -e "\033[33mERR run cmd not found: Falling back to docker build\033[0m"
+        DF="$1" abb
+    fi
+
+    read -p "Press any key to continue..."
+}
+
+set-theme() {
+    echo "$1" > ~/SYSTEM_THEME
+    pkill -USR1 vim
+}
+
+export BAT_THEME='Solarized (light)'
+alias bat="batcat --theme='Solarized (light)' --style='plain'"
+export K9S_SKIN="transparent"
+
+export EDITOR=nvim
+export FZF_DEFAULT_OPTS='--color=bg:-1,bg+:-1,gutter:-1,hl:#e06c75,hl+:#e06c75,info:#d19a66,prompt:#61afef,pointer:#c678dd,marker:#98c379,spinner:#61afef,header:#61afef'
+
+docker-debug() {
+    read -r rows cols < <(stty size)
+    export rows cols
+
+    BUILDX_EXPERIMENTAL=1 docker buildx debug --invoke 'entrypoint=["sh"],"args=[""-c"",""stty rows '"$rows"' cols '"$cols"' && exec bash""]"' build "$@"
+}
+
